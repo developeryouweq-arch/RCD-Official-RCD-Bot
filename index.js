@@ -96,44 +96,12 @@ function buildThreadEmbed(leagueId, league) {
     .setColor(0x2b2d31);
 }
 
-// ─── Bad words ────────────────────────────────────────────────────────────────
-
-const BAD_WORDS = [
-  'fuck', 'f u c k', 'f*ck', 'fck',
-  'shit', 'sh*t',
-  'bitch', 'b*tch', 'btch',
-  'cunt',
-  'dick',
-  'pussy',
-  'bastard',
-  'whore',
-  'slut',
-  'nigga', 'nigger',
-  'faggot', 'fag',
-  'ass',
-];
-
-function containsBadWord(text) {
-  const normalized = text.toLowerCase().replace(/\s+/g, '');
-  return BAD_WORDS.some(word => normalized.includes(word.replace(/\s+/g, '')));
-}
-
-function getTimeoutDuration(warns) {
-  if (warns >= 30) return { ms: 20 * 24 * 60 * 60 * 1000, label: '20 day timeout' };
-  if (warns >= 15) return { ms: 10 * 24 * 60 * 60 * 1000, label: '10 day timeout' };
-  if (warns >= 10) return { ms:  3 * 24 * 60 * 60 * 1000, label: '3 day timeout'  };
-  if (warns >=  5) return { ms:      24 * 60 * 60 * 1000, label: '24 hour timeout' };
-  if (warns >=  1) return { ms:           30 * 60 * 1000, label: '30 minute timeout' };
-  return null;
-}
 
 // ─── Client ───────────────────────────────────────────────────────────────────
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildModeration,
     GatewayIntentBits.GuildWebhooks,
@@ -472,51 +440,6 @@ async function handleButton(interaction) {
   }
 }
 
-// ─── Automod ──────────────────────────────────────────────────────────────────
-
-client.on('messageCreate', async message => {
-  if (message.author.bot) return;
-  if (!message.guild)      return;
-
-  if (!containsBadWord(message.content)) return;
-
-  try { await message.delete(); } catch {}
-
-  const db = loadDB();
-  if (!db.warns) db.warns = {};
-
-  const userId = message.author.id;
-  if (!db.warns[userId]) db.warns[userId] = 0;
-  db.warns[userId]++;
-
-  const warns      = db.warns[userId];
-  const punishment = getTimeoutDuration(warns);
-
-  if (warns >= 30) db.warns[userId] = 0;
-
-  saveDB(db);
-
-  if (punishment) {
-    try {
-      const member = await message.guild.members.fetch(userId);
-      await member.timeout(punishment.ms, `Automod: NSFW/prohibited content detected (warn ${warns})`);
-    } catch {}
-  }
-
-  try {
-    const warnEmbed = new EmbedBuilder()
-      .setTitle('Automod Warning')
-      .setDescription(
-        `${message.author}, your message was removed for containing prohibited NSFW or offensive content.\n\n` +
-        `**Warn count:** ${warns >= 30 ? '30 (reset to 0)' : warns}/30\n` +
-        (punishment ? `**Consequence:** ${punishment.label}` : '')
-      )
-      .setColor(0x2b2d31)
-      .setTimestamp();
-
-    await message.channel.send({ embeds: [warnEmbed] });
-  } catch {}
-});
 
 // ─── Anti-Nuke ────────────────────────────────────────────────────────────────
 
