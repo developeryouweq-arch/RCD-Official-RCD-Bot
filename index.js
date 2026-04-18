@@ -288,9 +288,10 @@ client.on('interactionCreate', async interaction => {
         db.leagues[id].messageId = msg.id;
         saveDB(db);
 
-        // Create private thread immediately on the league post
+        // Create private thread immediately on the league channel
         try {
-          const thread = await msg.startThread({
+          const leagueChannel = await client.channels.fetch(interaction.channelId);
+          const thread = await leagueChannel.threads.create({
             name:                `${id} ${format} ${type}`,
             autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
             type:                ChannelType.PrivateThread,
