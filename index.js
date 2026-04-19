@@ -102,11 +102,27 @@ function buildThreadEmbed(leagueId, league) {
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildModeration,
     GatewayIntentBits.GuildWebhooks,
   ],
 });
+
+// ─── Spam tracker ─────────────────────────────────────────────────────────────
+
+const spamMap = new Map(); // userId -> [{ messageId, channelId, timestamp }]
+const SPAM_WINDOW_MS  = 2000; // 2 second window
+const SPAM_THRESHOLD  = 6;    // 6 messages triggers a warn
+
+function getSpamPunishment(warns) {
+  if (warns >= 50) return { type: 'kick',    label: 'kick'           };
+  if (warns >= 30) return { type: 'timeout', ms: 24 * 60 * 60 * 1000, label: '1 day timeout'   };
+  if (warns >= 10) return { type: 'timeout', ms:      10 * 60 * 1000, label: '10 minute timeout' };
+  if (warns >=  5) return { type: 'timeout', ms:       5 * 60 * 1000, label: '5 minute timeout'  };
+  return null;
+}
 
 // ─── Slash commands ───────────────────────────────────────────────────────────
 
@@ -163,6 +179,7 @@ const commands = [
   new SlashCommandBuilder()
     .setName('guidelines')
     .setDescription('Post the server guidelines to the info channel'),
+
 ];
 
 // ─── Ready ────────────────────────────────────────────────────────────────────
@@ -440,6 +457,71 @@ async function handleButton(interaction) {
   }
 }
 
+
+// ─── Spam Detection ───────────────────────────────────────────────────────────
+
+client.on('messageCreate', async message => {
+  if (message.author.bot) return;
+  if (!message.guild)      return;
+
+  const userId = message.author.id;
+  const now    = Date.now();
+
+  if (!spamMap.has(userId)) spamMap.set(userId, []);
+
+  const entries = spamMap.get(userId).filter(e => now - e.timestamp < SPAM_WINDOW_MS);
+  entries.push({ messageId: message.id, channelId: message.channelId, timestamp: now });
+  spamMap.set(userId, entries);
+
+  if (entries.length < SPAM_THRESHOLD) return;
+
+  // Clear tracker so the same burst doesn't warn multiple times
+  spamMap.set(userId, []);
+
+  // Delete the spam messages
+  try {
+    const channel = message.channel;
+    const ids = entries.map(e => e.messageId);
+    await channel.bulkDelete(ids, true).catch(() => {
+      ids.forEach(id => channel.messages.delete(id).catch(() => {}));
+    });
+  } catch {}
+
+  // Issue warn
+  const db = loadDB();
+  if (!db.warns[userId]) db.warns[userId] = 0;
+  db.warns[userId]++;
+  const warns     = db.warns[userId];
+  const punishment = getSpamPunishment(warns);
+  saveDB(db);
+
+  // Apply punishment
+  if (punishment) {
+    try {
+      const member = await message.guild.members.fetch(userId);
+      if (punishment.type === 'kick') {
+        await member.kick('Spam: 50+ warns reached');
+      } else {
+        await member.timeout(punishment.ms, `Spam detection (warn ${warns})`);
+      }
+    } catch {}
+  }
+
+  // Send warning embed
+  try {
+    const warnEmbed = new EmbedBuilder()
+      .setTitle('Spam Warning')
+      .setDescription(
+        `${message.author}, your messages were removed for spamming.\n\n` +
+        `**Warn count:** ${warns}\n` +
+        (punishment ? `**Consequence:** ${punishment.label}` : '')
+      )
+      .setColor(0x2b2d31)
+      .setTimestamp();
+
+    await message.channel.send({ embeds: [warnEmbed] });
+  } catch {}
+});
 
 // ─── Anti-Nuke ────────────────────────────────────────────────────────────────
 
